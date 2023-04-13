@@ -986,6 +986,19 @@ mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(
         ),
         mx_sdk_vm.LibraryConfig(
             use_modules='image',
+            destination="<lib:native-image-bundle-agent>",
+            jvm_library=True,
+            jar_distributions=[
+                'substratevm:JVMTI_AGENT_BASE',
+                'substratevm:SVM_BUNDLE_AGENT',
+            ],
+            build_args=driver_build_args + [
+                '--features=com.oracle.svm.bundleagent.NativeImageBundleAgent$RegistrationFeature',
+            ],
+            headers=False,
+        ),
+        mx_sdk_vm.LibraryConfig(
+            use_modules='image',
             destination="<lib:native-image-diagnostics-agent>",
             jvm_library=True,
             jar_distributions=[
