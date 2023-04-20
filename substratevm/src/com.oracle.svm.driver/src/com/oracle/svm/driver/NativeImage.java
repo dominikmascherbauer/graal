@@ -906,9 +906,6 @@ public class NativeImage {
 
     private void processClasspathNativeImageMetaInf(Path classpathEntry) {
         try {
-            if (classpathEntry.startsWith(Path.of("/input"))) {
-                classpathEntry = bundleSupport.rootDir.resolve(Path.of("/").relativize(classpathEntry));
-            }
             NativeImageMetaInfWalker.walkMetaInfForCPEntry(classpathEntry, metaInfProcessor);
         } catch (NativeImageMetaInfWalker.MetaInfWalkException e) {
             throw showError(e.getMessage(), e.cause);
@@ -1454,27 +1451,36 @@ public class NativeImage {
         BiFunction<Path, BundleMember.Role, Path> substituteAuxiliaryPath = useBundle() ? bundleSupport::substituteAuxiliaryPath : (a, b) -> a;
         Function<String, String> imageArgsTransformer = rawArg -> apiOptionHandler.transformBuilderArgument(rawArg, substituteAuxiliaryPath);
         List<String> finalImageArgs = imageArgs.stream().map(imageArgsTransformer).collect(Collectors.toList());
+
         Function<Path, Path> substituteClassPath = useBundle() ? bundleSupport::substituteClassPath : Function.identity();
         List<Path> finalImageClassPath = imagecp.stream().map(substituteClassPath).collect(Collectors.toList());
+
         Function<Path, Path> substituteModulePath = useBundle() ? bundleSupport::substituteModulePath : Function.identity();
         List<Path> finalImageModulePath = imagemp.stream().map(substituteModulePath).collect(Collectors.toList());
+
         List<String> finalImageBuilderArgs = createImageBuilderArgs(finalImageArgs, finalImageClassPath, finalImageModulePath);
 
+
         /* Construct ProcessBuilder command from final arguments */
+        String javaExecutable;
+        List<String> command = new ArrayList<>();
+
+        if(useBundle() && bundleSupport.useContainer) {
+            bundleSupport.replacePathsForContainerBuild(arguments);
+            bundleSupport.replacePathsForContainerBuild(finalImageBuilderArgs);
+            Path binJava = Paths.get("bin", "java");
+            javaExecutable = bundleSupport.containerGraalVMHome.resolve(binJava).toString();
+        } else {
+            javaExecutable = canonicalize(config.getJavaExecutable()).toString();
+        }
+
         Path argFile = createVMInvocationArgumentFile(arguments);
         Path builderArgFile = createImageBuilderArgumentFile(finalImageBuilderArgs);
-        List<String> command = new ArrayList<>();
-        if(useBundle() && bundleSupport.useContainer) {
-            List<String> containerCommand = List.of(bundleSupport.containerTool, "run", "--network=none", "--rm",
-                    "--mount", "type=bind,source=" + config.getJavaHome() + ",target=" + bundleSupport.containerGraalVMHome + ",readonly",
-                    "--mount", "type=bind,source=" + bundleSupport.inputDir + ",target=" + bundleSupport.containerRootDir.resolve(bundleSupport.inputDir.getFileName()) + ",readonly",
-                    "--mount", "type=bind,source=" + bundleSupport.outputDir + ",target=" + bundleSupport.containerRootDir.resolve(bundleSupport.outputDir.getFileName()),
-                    "--mount", "type=bind,source=" + argFile + ",target=" + argFile + ",readonly",
-                    "--mount", "type=bind,source=" + builderArgFile + ",target=" + builderArgFile + ",readonly",
-                    bundleSupport.containerImage);
-            command.addAll(containerCommand);
+
+        if(!isDryRun() && useBundle() && bundleSupport.useContainer) {
+            command.addAll(bundleSupport.createContainerCommand(argFile, builderArgFile));
         }
-        String javaExecutable = canonicalize(config.getJavaExecutable()).toString();
+
         command.add(javaExecutable);
         command.add("@" + argFile);
         command.add(NativeImageGeneratorRunner.IMAGE_BUILDER_ARG_FILE_OPTION + builderArgFile);
